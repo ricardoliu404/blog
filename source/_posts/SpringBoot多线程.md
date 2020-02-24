@@ -1,6 +1,7 @@
 ---
 title: Spring Boot多线程
 date: 2020-02-03 20:07:28
+cover: https://images.pexels.com/photos/3511104/pexels-photo-3511104.jpeg?cs=srgb&dl=pexels-3511104.jpg&fm=jpg
 categories:
 - 实践
 tags: Spring Boot

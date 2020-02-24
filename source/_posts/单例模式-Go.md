@@ -1,6 +1,7 @@
 ---
 title: 单例模式-Go
 date: 2020-02-24 09:55:09
+cover: https://images.pexels.com/photos/3626734/pexels-photo-3626734.jpeg?cs=srgb&dl=pexels-3626734.jpg&fm=jpg
 tags:
 - Go设计模式
 categories:
@@ -102,3 +103,5 @@ $go test -v
 PASS
 ok      github.com/ricardoliu404/go-design-patterns/creational/singleton        0.151s
 ```
+
+> 源码见https://github.com/ricardoliu404/go-design-patterns/tree/master/creational/singleton
