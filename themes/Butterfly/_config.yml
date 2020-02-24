@@ -390,7 +390,7 @@ click_heart:
 
 # 點擊出現文字，文字可自行修改
 ClickShowText:
-  enable: true
+  enable: false
   text:
     - 富强
     - 民主
