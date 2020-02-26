@@ -143,3 +143,5 @@ PASS
 ok      github.com/ricardoliu404/go-design-patterns/creational/factory  0.143s
 
 ```
+
+> 源码见https://github.com/ricardoliu404/go-design-patterns/tree/master/creational/factory
