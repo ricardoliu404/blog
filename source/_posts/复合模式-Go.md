@@ -33,7 +33,7 @@ categories:
 
 ## 示例
 
-复合模式是一种纯结构模式，对于结构本身没什么可测试的。因此这次不会写单元测试，在此简单的描述复合模式的创建。
+复合模式是一种纯纯结构模式，对于结构本身没什么可测试的。因此这次不会写单元测试，在此简单的描述复合模式的创建。
 
 首先从`Athlete`结构和`Train()`方法开始
 
@@ -108,3 +108,122 @@ fish := Shark{
 fish.Eat()
 fish.Swim()
 ```
+
+现在我们有了一个有初始值的、嵌入的`Animal`类型。这就是为什么可以在不创建或者使用内部字段名的情况下调用`Eat()`方法。
+
+还有第三个方法使用复合模式。我们可以创建一个`Swimmer`接口，定义一个`Swim()`方法和一个`SwimmerImpl`类型嵌入到游泳运动员中。
+
+``` Go
+type Swimmer interface {
+    Swim()
+}
+
+type Trainer interface {
+    Train()
+}
+
+type SwimmerImpl struct {}
+func (s *SwimmerImpl) Swim() {
+    fmt.Println("Swimming!")
+}
+
+type CompositeSwimmerB struct {
+    Trainer
+    Swimmer
+}
+```
+
+用这种方法可以更明确的控制对象的创建。`Swimmer`字段是嵌入的，但是不会被自动初始化，因为它指向一个接口。正确的使用方法是：
+
+``` Go
+swimmer := CompositeSwimmerB {
+    &Athlete{},
+    &SwimmerImpl{},
+}
+
+swimmer.Train()
+swimmer.Swim()
+```
+
+哪种方法更妙？个人来讲，接口方法是最好的。首先，面向接口编程、其次，你不会把代码的一部分留给编译器的零初始化特性。这是一个非常强大的特性，但必须小心使用，因为它会导致运行时问题，在编译时使用接口时会发现这些问题。实际上，在不同的情况下，零初始化将在运行时为您节省时间！但我更喜欢尽可能多地使用接口，所以这实际上不是一个选项。
+
+## 二叉树复合（Binary Tree Compositions）
+
+另一种常见的符合模式是在模拟二叉树时，需要在字段中存储本身类型（左右孩子）：
+
+``` Go
+type Tree struct {
+    LeafValue int
+    Right *Tree
+    left *Tree
+}
+```
+
+这是一种递归复合，并且由于递归的特性，我们必须用指针才能让编译器知道需要留多少内存。`Tree`这个结构体为每个实例存储了`LeafValue`对象，还有`Left`和`Right`中的两个新`Tree`。
+
+我们可以这样创建一个对象：
+
+``` Go
+root := Tree{
+    LeafValue: 0,
+    Right: &Tree{
+        LeafValue: 5,
+        Right: &Tree{
+            6, nil, nil,
+        }
+        Left: nil,
+    },
+    Left: &Tree{
+        4, nil, nil,
+    }
+}
+//          0
+//        /   \
+//       4     5
+//      / \   / \
+//     n   n n   6
+//              / \
+//             n   n
+```
+
+# 复合模式和继承
+
+我们在Go中使用组合设计模式时，必须明确与继承区分开。例如当我们把`Parent`结构嵌入到`Son`结构中：
+
+``` Go
+type Parent struct { 
+    SomeField int
+}
+type Son struct { 
+    Parent
+}
+```
+
+我们不能把`Son`当做一个`Parent`，也就是说当一个函数需要一个`Parent`实例时不能把`Son`传递给他：
+
+``` Go
+func GetParentField(p *Parent) int {
+    fmt.Println(p.SomeField)
+}
+```
+
+如果试图传递一个`Son`实例给`GetParentField`，就会得到一个错误信息
+
+> **cannot use son (type Son) as type Parent in argument to GetParentField**
+
+如果非要这样的话，可以吧`Parent`作为一个字段而不是嵌入进`Son`中去：
+
+``` Go
+type Son struct {
+    P Parent
+}
+```
+
+现在可以通过`P`这个字段传递`Parent`给`GetParentField`了：
+
+``` Go
+son := Son{}
+GetParentField(son.P)
+```
+
+> 源码见 https://github.com/ricardoliu404/go-design-patterns/tree/master/structural/composite
