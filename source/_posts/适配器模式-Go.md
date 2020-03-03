@@ -124,6 +124,7 @@ func(p *PrinterAdapter) PrintStored() (newMsg string) {
 
 在`PrintStored`方法中，首先检查是否有`LegacyPrinter`实例。在此例中，我们使用存储的消息和适配器前缀组成一个新字符串，将其存储在返回变量（称为`newMsg`）中。然后我们使用指向`MyLegacyPrinter`结构的指针来使用`LegacyPrinter`接口打印合成的消息。如果`LegacyPrinter`实例不存在，就直接返回原始值。
 
+> 源码见 https://github.com/ricardoliu404/go-design-patterns/tree/master/structural/adapter
 
 # Go源代码中的适配器模式举例
 
