@@ -37,8 +37,6 @@ categories:
 
 ### 测试用例
 
-#### 1. `PrinterAPI`接口
-
 此接口定义了一个`PrintMessage(string)`方法，将输入的参数打印出来：
 
 ``` Go
@@ -47,13 +45,12 @@ type PrinterAPI interface {
 }
 ```
 
-#### 2. `PrinterImpl1`——简单API实现
-
 ``` Go
 type PrinterImpl1 struct {}
 
 func (p *PrinterImpl1) PrintMessage(msg string) error {
-    return errors.New("Not implemented yet")
+    fmt.Printf("%s\n", msg)
+	return nil
 }
 ```
 
@@ -72,10 +69,161 @@ func TestPrinAPI1(t *testing.T) {
 
 单元测试中创建了一个`PrinterImpl1`实例，用`PrintMessage`方法打印Hello到控制台，目前没有实现，所以返回错误。
 
-#### 3. `PrinterImpl1`实现向io.Writer写入
+`PrinterImpl2`实现了`PrinterAPI`接口，并存储了一个`io.Writer`的实现。
 
 ``` Go
 type PrinterImpl2 struct {
     Writer io.Writer
 }
+
+func (d *PrinterImpl2) PrintMessage(msg stirng) error {
+    if p.Writer == nil {
+		return errors.New("You need to pass an io.Writer to PrinterImpl2")
+	}
+	_, _ = fmt.Fprintf(p.Writer, "%s", msg)
+	return nil
+}
 ```
+
+我们创建一个`io.Writer`的实现，并在本地字段中保存写入的东西。这样就可以检查我们往`Writer`中写的是什么：
+
+``` Go
+type TestWriter struct {
+    Msg string
+}
+
+func (t *TestWriter) Write(p []byte) (n int, err error) {
+    n = len(p)
+    if n > 0 {
+        t.Msg = string(p)
+        return n, nil
+    }
+    err = errors.New("Content received on Writer was empty")
+    return
+}
+```
+
+在我们的测试对象中，写入字段前判断是否为空，如果是空则返回错误，如果不是，我们把输入字符保存到`Msg`字段中。我们利用这个做一个测试：
+
+``` Go
+func Test PrintAPI2(t *testing.T) {
+    api2 := PrinterImpl2{}
+    err := api2.PrintMessage("Hello")
+    if err != nil{
+        expectedErrorMessage := "You need to pass an io.Writer to PrinterImpl2"
+        if !string.Contains(err.Error(), expectedErrorMessage) {
+            t.Errorf("Error message was not correct.\n
+            Actual: %s\nExpected: %s\n", err.Error(). exceptedErrorMessage)
+        }
+    }
+
+    testWriter := TestWriter{}
+    api2 = PrinterImpl2{
+        Writer: &testWriter,
+    }
+
+    expectedMessage := "Hello"
+    err = api2.PrintMessage(expectedMessage)
+    if err != nil {
+        t.Errorf("Error trying to use the API2 implementation: %s\n", err.Error())
+    }
+
+    if testWriter.Msg != expectedMessage {
+        t.Fatalf("API2 did not write correctly on the io.Writer. \n Actual: %s\nExpected: %s\n", testWriter.Msg, expectedMessage)
+    }
+}
+```
+
+测试用例的上半部分，我们创建了一个叫做api2的PrinterImpl2实例。并没有给他传递一个io.Writer实例，因此我们首先检查我们会收到一个错误（"You need to pass an io.Writer to PrinterImpl2"），接着我们尝试调用PrintMessage方法。
+
+测试用例的下班部分我们将io.Writer的实例传递给api2的Writer字段，看看我们会不会收到错误消息。然后检查testWriter.Msg域，如果没有问题，应该会包括`Hello`。 
+
+接下来是桥接模块：
+
+``` Go
+type PrinterAbstraction interface {
+	Print() error
+}
+
+type NormalPrinter struct {
+	Msg     string
+	Printer PrinterAPI
+}
+
+func (c *NormalPrinter) Print() error {
+	c.Printer.PrintMessage(c.Msg)
+	return nil
+}
+
+type PacktPrinter struct {
+	Msg     string
+	Printer PrinterAPI
+}
+
+func (c *PacktPrinter) Print() error {
+	c.Printer.PrintMessage(fmt.Sprintf("Message from Packt: %s", c.Msg))
+	return nil
+}
+```
+
+具体测试设计如下：
+
+``` Go
+func TestNormalPrinter_Print(t *testing.T) {
+	expectedMessage := "Hello io.Writer"
+
+	normal := NormalPrinter{
+		Msg:     expectedMessage,
+		Printer: &PrinterImpl1{},
+	}
+
+	err := normal.Print()
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	testWriter := TestWriter{}
+	normal = NormalPrinter{
+		Msg: expectedMessage,
+		Printer: &PrinterImpl2{
+			Writer: &testWriter,
+		},
+	}
+	err = normal.Print()
+	if err != nil {
+		t.Error(err.Error())
+	}
+	if testWriter.Msg != expectedMessage {
+		t.Errorf("The expected message on the io.Writer doesn't match actual.\n Actual: %s\nExpected: %s\n", testWriter.Msg, expectedMessage)
+	}
+}
+
+func TestPacktPrinter_Print(t *testing.T) {
+	passedMessage := "Hello io.Writer"
+	expectedMessage := "Message from Packt: Hello io.Writer"
+	packt := PacktPrinter{
+		Msg:     passedMessage,
+		Printer: &PrinterImpl1{},
+	}
+	err := packt.Print()
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+	testWriter := TestWriter{}
+	packt = PacktPrinter{
+		Msg: passedMessage,
+		Printer: &PrinterImpl2{
+			Writer: &testWriter,
+		},
+	}
+	err = packt.Print()
+	if err != nil {
+		t.Error(err.Error())
+	}
+	if testWriter.Msg != expectedMessage {
+		t.Errorf("The expected message on the io.Writer doesn't match actual.\n Actual: %s\nExpected: %s\n", testWriter.Msg, expectedMessage)
+	}
+}
+```
+
+>源码见 https://github.com/ricardoliu404/go-design-patterns/tree/master/structural/bridge
