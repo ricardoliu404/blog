@@ -142,3 +142,209 @@ func memConsumed() uint64 {
 ```
 
 在Windows10 x64 & Go 1.14环境下，得到的数据为`8.692kb`。这个例子理想化地让我们了解了每个goroutine创建所需要的付出的空间代价。
+
+接下来测试在一个线程上发送和接受消息所需的时间，此处构建一个类似Linux内核基准测试的Go例子，创建两个goroutine并在他们之间发送消息：
+
+``` Go
+func BenchmarkContextSwitch(b *testing.B) {
+	var wg sync.WaitGroup
+	begin := make(chan struct{})
+	c := make(chan struct{})
+
+	var token struct{}
+	sender := func() {
+		defer wg.Done()
+		<- begin// 此处会阻塞，直到接收到数据
+		for i := 0 ; i < b.N ; i ++ {
+			c <- token// 接受发送者的数据，结构体不占空间，因此不会影响发送信息的时间
+		}
+	}
+
+	receiver := func() {
+		defer wg.Done()
+		<- begin// 此处会阻塞，直到接收到数据
+		for i := 0 ; i < b.N ; i ++ {
+			<- c// 仅接受发送过来的数据，不作处理
+		}
+	}
+
+	wg.Add(2)
+	go sender()
+	go receiver()
+	b.StartTimer()
+	close(begin)
+	wg.Wait()
+}
+```
+
+结果如下，可见线程间切换速度为159ns/op
+
+``` 
+goos: linux
+goarch: amd64
+BenchmarkContextSwitch
+BenchmarkContextSwitch-8   	 9725066	       159 ns/op
+PASS
+```
+
+# sync包
+
+sync包包含对低级别内存访问同步最有用的并发原语。 如果你使用的是主要通过内存访问同步处理并发的语言，那么这些类型可能已经很熟悉了。Go与这些语言的区别在于，Go在内存访问同步基元的基础上构建了一组新的并发基元，并为使用者提供扩展的内容。 这些操作都有其用处——主要体现在小的作用域中，例如结构体。 你可以自行决定何时内存访问同步是最适当的。
+
+## WaitGroup
+
+若不关心并发操作的结果，或有其他方式收集结果，可以使用`WaitGroup`等待一组并发操作完成。`WaitGroup`类似于Java中的CountDownLatch，通过Add方法增加计数，通过Done方法减少计数。Wait方法会阻塞当前协程直到计数器归零。
+
+**注意Add方法应在goroutine调用之前添加，否则无法保证Add方法在goroutine中的调用早于Wait的调用**
+
+``` Go
+var wg sync.WaitGroup
+
+wg.Add(1) 
+go func() {
+	defer wg.Done() 
+	fmt.Println("1st goroutine sleeping...")
+	time.Sleep(1)
+}()
+
+wg.Add(1) 
+go func() {
+	defer wg.Done() 
+	fmt.Println("2nd goroutine sleeping...")
+	time.Sleep(2)
+}()
+
+wg.Wait() 
+fmt.Println("All goroutines complete.")
+```
+
+## Mutex & RWMutex
+
+### Mutex 互斥锁
+
+Mutex提供了一种并发安全的方式来表示对共享资源访问的独占。下例有两个简单的goroutine，试图增加和减少一个公共值，病使用Mutex同步访问：
+
+``` Go
+var count int
+var lock sync.Mutex
+
+increment := func() {
+    lock.Lock()
+    defer lock.Unlock()
+    count ++
+    fmt.Println("Incrementing: %d\n", count)
+}
+
+decrement := func() {
+    lock.Lock()
+    defer lock.Unlock()
+    count --
+    fmt.Println("Decrementing: %d\n", count)
+}
+
+var arithmetic sync.WaitGroup
+for i := 0 ; i <= 5 ; i ++ {
+    arithmetic.Add(1)
+    go func() {
+        defer arithmetic.Done()
+        increment()
+    }()
+}
+
+for i := 0 ; i <= 5 ; i ++ {
+    arithmetic.Add(1)
+    go func() {
+        defer arithmetic.Done()
+        decrement()
+    }()
+}
+
+arithmetic.Wait()
+fmt.Println("Arithmetic complete.")
+```
+
+被锁定的部分时程序的性能瓶颈，进入和退出锁的成本较高，因此通常需要尽量减少锁定的范围。若多个并发进程之间共享的内存不是都要读和写的，可以考虑使用另一个类型的互斥锁：sync.RWMutex。
+
+### RWMutex 读写锁
+
+RWMutex在控制方式上更加灵活，可以请求读锁，此时你可以读内存，除非有其他goroutine在进行写操作，也就是说，只要没有goroutine在进行写操作，可以允许任意数量的并发读。如下时一个实例：
+
+``` Go
+package main
+
+import (
+	"fmt"
+	"math"
+	"os"
+	"sync"
+	"text/tabwriter"
+	"time"
+)
+
+var producer = func(wg *sync.WaitGroup, l sync.Locker) {
+	defer wg.Done()
+	for i := 5 ; i > 0 ; i -- {
+		l.Lock()
+		l.Unlock()
+		time.Sleep(1)
+	}
+}
+
+var observer = func(wg *sync.WaitGroup, l sync.Locker) {
+	defer wg.Done()
+	l.Lock()
+	defer l.Unlock()
+}
+
+var test = func(count int, mutex, rwMutex sync.Locker) time.Duration {
+	var wg sync.WaitGroup
+	wg.Add(count + 1)
+	beginTestTime := time.Now()
+	go producer(&wg, mutex)
+	for i := count ; i > 0 ; i -- {
+		go observer(&wg, rwMutex)
+	}
+	wg.Wait()
+	return time.Since(beginTestTime)
+}
+
+func main() {
+	tw := tabwriter.NewWriter(os.Stdout, 0, 1, 2, ' ', 0)
+	defer tw.Flush()
+
+	var m sync.RWMutex
+	fmt.Fprintf(tw, "Readers\tRWMutex\tMutex\n")
+	for i := 0 ; i < 20 ; i ++ {
+		count := int(math.Pow(2, float64(i)))
+		fmt.Fprintf(
+			tw, "%d\t%v\t%v\n", count,
+			test(count, &m, m.RLocker()), test(count, &m, &m),
+			)
+	}
+}
+```
+
+本机运行环境为Ubunut 18.04 with Go 1.14，运行结果如下，可以观察到在某些情况下RWMutex耗时仍超过Mutex。（僵硬）
+```
+Readers  RWMutex       Mutex
+1        13.604µs      1.749µs
+2        2.063µs       1.675µs
+4        3.376µs       2.13µs
+8        9.271µs       5.18µs
+16       5.468µs       12.849µs
+32       18.164µs      29.581µs
+64       32.949µs      30.475µs
+128      30.385µs      32.923µs
+256      50.322µs      112.662µs
+512      98.378µs      117.562µs
+1024     248.239µs     244.162µs
+2048     428.428µs     421.438µs
+4096     735.572µs     859.512µs
+8192     1.645508ms    1.396318ms
+16384    3.436893ms    3.579149ms
+32768    6.182269ms    6.854283ms
+65536    12.855801ms   13.686491ms
+131072   25.55003ms    27.068042ms
+262144   54.767586ms   60.825475ms
+524288   103.354592ms  103.018981ms
+```
