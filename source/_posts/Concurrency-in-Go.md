@@ -348,3 +348,117 @@ Readers  RWMutex       Mutex
 262144   54.767586ms   60.825475ms
 524288   103.354592ms  103.018981ms
 ```
+
+## Cond
+
+> Cond实现了一个条件变量，用于等待或者宣布时间发生时goroutine的交汇点。
+
+有时需要在收到某个goroutine信号之前令自己处于等待状态，最初的暴力解决办法是使用无限循环`for conditionTrue() == false {/*巴拉巴拉*/}`，但是这样会消耗一个内核的所有周期。同事我们也可以用sleep的方法暂停当前协程，即`for conditionTrue() == false { time.Sleep(1 * time.Millisecond); /*巴拉巴拉*/}`，但是执行效率非常低，明确标示需要休眠多久，这样过长或过短都会浪费CPU时间。
+
+此时我们即可考虑`Cond`。
+
+``` Go
+c := sync.NewCond(&sync.Mutex{})
+c.L.Lock()
+for conditionTrue() == false {
+	c.Wait()
+}
+c.L.UnLock()
+```
+
+在该段代码中，首先实例化一个新的Cond，将互斥锁传入；接着锁定Cond中的Locker，因为在Wait调用时，此goroutine会被暂停并解锁该Locker；在循环中进入暂停状态，此处被阻塞，直到接收到通知；最后在循环外部解锁Locker。
+
+**在这个例子里，调用`Wait`时不仅仅阻塞当前goroutine，同时会调用`c.L.Unlock()`，并在退出`Wait`时会调用`c.L.Lock()`。也就是说，在等待条件发生的过程中我们并非一直持有这个锁。**
+
+``` Go
+c := sync.NewCond(&sync.Mutex{})//使用一个标准的sync.Mutex作为Locker来创建Cond
+queue := make([]interface{}, 0, 10)//创建一个长度为零的切片。 由于我们知道最终会添加10个元素，因此我们将其容量设为10
+
+removeFromQueue := func(delay time.Duration) {
+	time.Sleep(delay)
+	c.L.Lock()//再次进入该并发条件下的关键部分，以修改与并发条件判断直接相关的数据
+	queue = queue[1:]//移除切片的头部并重新分配给第二个元素，这一步模拟了元素出列
+	fmt.Println("Removed from Queue")
+	c.L.Unlock()//退出操作关键部分，因为我们已经成功移除了一个元素
+	c.Signal()//发出信号，通知处于等待状态的goroutine可以进行下一步了
+}
+
+for i := 0 ; i < 10 ; i ++ {
+	c.L.Lock()//进入关键的部分前调用Lock来锁定c.L。
+	for len(queue) == 2 {//在这里我们检查队列的长度，以确认什么时候需要等待。由于removeFromQueue是异步的，for不满足时才会跳出，而if做不到重复判断，这一点很重要。
+		c.Wait()//调用Wait，这将阻塞main goroutine，直到接受到信号。
+	}
+	fmt.Println("Adding to Queue")
+	queue = append(queue, struct{}{})
+	go removeFromQueue(1 * time.Second)//创建一个新的goroutine，它会在1秒后将元素移出队列。
+	c.L.Unlock()//这里我们退出条件的关键部分，因为我们已经成功加入了一个元素。
+}
+```
+
+上述代码片段输出为：
+
+```
+Adding to queue 
+Adding to queue 
+Removed from queue 
+Adding to queue 
+Removed from queue 
+Adding to queue 
+Removed from queue 
+Adding to queue 
+Removed from queue 
+Adding to queue 
+Removed from queue 
+Adding to queue 
+Removed from queue 
+Adding to queue 
+Removed from queue 
+Adding to queue 
+Removed from queue 
+Adding to queue 
+```
+
+程序成功将所有十个元素添加到队列中，并有机会在最后两项出队之前退出。也会持续等待，直到至少有一个元素在放入另一个元素之前出列。
+`Signal`是`Cond`类型提供的两种通知方法之一，用于通知在等待调用上阻塞的goroutines条件已经被触发。另一种是`Broadcast`。在`Cond`内部，`runtime`维护了一个等待信号发送的goroutines的FIFO队列，`Signal`寻找等待时间最长的goroutine并通知，而`Broadcast`向所有处在等待状态的goroutines发送信号。
+
+关于`Broadcast`可以有如下示例，该示例中创建一个带有按钮的程序，该程序注册任意数量的函数，点击按钮时运行这些函数，用`Broadcast`通知：
+
+``` Go
+type Button struct {
+	//定义一个Button类型，包含了sync.Cond指针类型的Clicked属性，这是goroutine接收通知的关键条件。
+	Clicked *sync.Cond
+}
+button := Button{Clicked: sync.NewCond(&sync.Mutex{})}
+
+subscribe := func(c *sync.Cond, fn func()) { //定义了简单的函数，允许我们注册函数来处理信号。每个注册的函数都在自己的goroutine上运行，并且在该goroutine不会退出，直到接收到通知。
+	var tempwg sync.WaitGroup
+	tempwg.Add(1)
+	go func() {
+		tempwg.Done()
+		c.L.Lock()
+		defer c.L.Unlock()
+		c.Wait()
+		fn()
+	}()
+	tempwg.Wait()
+}
+
+var wg sync.WaitGroup //创建WaitGroup，等待所有子协程完成后再结束。
+wg.Add(3)
+subscribe(button.Clicked, func() { //注册了最大化窗口函数
+	fmt.Println("Maximizing window.")
+	wg.Done()
+})
+subscribe(button.Clicked, func() { //注册了对话框函数
+	fmt.Println("Displaying annoying dialog box!")
+	wg.Done()
+})
+subscribe(button.Clicked, func() { //注册了鼠标点击函数
+	fmt.Println("Mouse clicked.")
+	wg.Done()
+})
+
+button.Clicked.Broadcast() //按钮在这里被点击
+
+wg.Wait()
+```
