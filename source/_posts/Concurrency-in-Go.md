@@ -462,3 +462,150 @@ button.Clicked.Broadcast() //按钮在这里被点击
 
 wg.Wait()
 ```
+
+## Once
+
+`Once`确保了即使在不同goroutine上，调用`Do`传入的函数只执行一次。
+例如：
+
+``` Go
+var count int				// 一个计数变量
+
+increment := func() {		//函数，将计数变量自增1
+	count++
+}
+
+var once sync.Once			//定义Once
+
+var wg sync.WaitGroup		//WaitGroup等待所有协程结束
+
+wg.Add(100)
+for i := 0; i < 100; i++ {	//循环100次调用该方法
+	go func() {
+		defer wg.Done()
+		once.Do(increment)	//将方法传入once.Do()中，指调用该函数
+	}()
+}
+
+wg.Wait()
+fmt.Printf("Count is %d\n", count)	//将输出"Count is 1"
+```
+
+如果对`sync.Once.Do()`只计算Do被调用的次数，不关心调用的函数是什么，例如下：
+
+``` Go
+var count int
+increment := func() { count++ }
+decrement := func() { count-- }
+
+var once sync.Once
+once.Do(increment)
+once.Do(decrement)
+
+fmt.Printf("Count: %d\n", count)	// 输出"Count: 1"
+```
+
+即once.Do()仅执行一次，后续的均被忽略。
+
+在下例中，会发生什么样的情况呢？
+
+``` Go
+package main
+
+import "sync"
+
+func main() {
+	var onceA, onceB sync.Once		
+	var initB func()				
+	initA := func() {				
+		onceB.Do(initB)
+	}
+	initB = func() {			// 1
+		onceA.Do(initA)
+	}
+	onceA.Do(initA)				// 2
+}
+```
+
+该例子会出现死锁的情况：`2`处调用`initA`，此时`onceA`已经执行过一次。`initA`函数中调用`onceB`，执行`initB`，而`initB`中需要再次调用`onceA`执行`initA`，但`onceA`已经执行过一次，因此不会执行，至此`1`处无法执行，`2`处无法结束，输出的错误如下：
+
+``` bash
+fatal error: all goroutines are asleep - deadlock!
+
+//...
+
+Process finished with exit code 2
+```
+
+## Pool
+
+池的概念是一种创建和提供固定数量可用对象的方式，通常用于约束创建资源昂贵的事务，例如数据库连接。
+
+**`sync.Pool`中保存的任何项都可能随时不做通知的释放掉，所以不适合用于像socket长连接或数据库连接池。**
+**`sync.Pool`可以安全的被多个线程同时使用**
+**`sync.Pool`主要用途是增加临时对象的重用率，减少GC负担**
+
+Pool主要接口是Get方法，被调用时检查池中是否有可用的实例返回给调用者，如果没有，创建一个新成员变量，使用完后调用者用Put方法将实例放回池中。
+
+``` Go
+myPool := &sync.Pool{
+	New: func() interface{} {
+		fmt.Println("Creating new instance.")
+		return struct{}{}
+	},
+}
+
+myPool.Get()             //调用一次Get方法，执行New函数
+instance := myPool.Get() //调用第二次Get方法，执行New函数
+myPool.Put(instance)     //将第二次Get结果放回myPool中 剩下可用1
+myPool.Get()             //调用第三次Get方法，无需执行New函数
+```
+
+处理临时变量时如果遇见一些大型结构体，可以使用Pool减少GC,例如：
+``` Go
+package main
+import (
+	"sync"
+	"time"
+	"fmt"
+)
+ 
+type structR6 struct {
+	B1 [10000000]int									//大型数组
+}
+var r6Pool = sync.Pool{
+	New: func() interface{} {
+		return new(structR6)
+	},
+}
+func usePool() {
+	startTime := time.Now()
+	for i := 0; i < 100000000; i++ {
+		sr6 := r6Pool.Get().(*structR6)
+		sr6.B1[0] = 0
+		r6Pool.Put(sr6)
+	}
+	fmt.Println("pool Used:", time.Since(startTime))
+}
+func standard() {
+	startTime := time.Now()
+	for i := 0; i < 100000000; i++ {
+		var sr6 structR6
+		sr6.B1[0] = 0
+	}
+	fmt.Println("standard Used:", time.Since(startTime))
+}
+func main() {
+	standard()
+	usePool()
+}
+```
+
+windows10 + Go 1.14的情况下，上述代码却出现了如下输出：
+``` Go
+standard Used: 23.935ms
+pool Used: 1.3793458s
+```
+
+> emmmmmmmmmmmmmmmm 
+> <p align="right">--------------------留下了没技术了泪水</p>
