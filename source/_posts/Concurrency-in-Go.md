@@ -1,5 +1,5 @@
 ---
-title: Concurrency-in-Go(1)
+title: Concurrency-in-Go
 date: 2020-03-19 14:21:50
 cover: https://images.pexels.com/photos/3511104/pexels-photo-3511104.jpeg?cs=srgb&dl=pexels-3511104.jpg&fm=jpg
 tags:
@@ -609,3 +609,5 @@ pool Used: 1.3793458s
 
 > emmmmmmmmmmmmmmmm 
 > <p align="right">--------------------留下了没技术了泪水</p>
+
+
